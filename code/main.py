@@ -14,8 +14,8 @@
 
 """This file contains the entrypoint to the rest of the code"""
 
-from __future__ import absolute_import
-from __future__ import division
+
+
 
 import os
 import io
@@ -83,19 +83,19 @@ def initialize_model(session, model, train_dir, expect_exists):
       expect_exists: If True, throw an error if no checkpoint is found.
         If False, initialize fresh model if no checkpoint is found.
     """
-    print "Looking for model at %s..." % train_dir
+    print("Looking for model at %s..." % train_dir)
     ckpt = tf.train.get_checkpoint_state(train_dir)
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
     if ckpt and (tf.gfile.Exists(ckpt.model_checkpoint_path) or tf.gfile.Exists(v2_path)):
-        print "Reading model parameters from %s" % ckpt.model_checkpoint_path
+        print("Reading model parameters from %s" % ckpt.model_checkpoint_path)
         model.saver.restore(session, ckpt.model_checkpoint_path)
     else:
         if expect_exists:
             raise Exception("There is no saved checkpoint at %s" % train_dir)
         else:
-            print "There is no saved checkpoint at %s. Creating model with fresh parameters." % train_dir
+            print("There is no saved checkpoint at %s. Creating model with fresh parameters." % train_dir)
             session.run(tf.global_variables_initializer())
-            print 'Num params: %d' % sum(v.get_shape().num_elements() for v in tf.trainable_variables())
+            print('Num params: %d' % sum(v.get_shape().num_elements() for v in tf.trainable_variables()))
 
 
 def main(unused_argv):
@@ -104,11 +104,11 @@ def main(unused_argv):
         raise Exception("There is a problem with how you entered flags: %s" % unused_argv)
 
     # Check for Python 2
-    if sys.version_info[0] != 2:
-        raise Exception("ERROR: You must use Python 2 but you are running Python %i" % sys.version_info[0])
+    if sys.version_info[0] != 3:
+        raise Exception("ERROR: You must use Python 3 but you are running Python %i" % sys.version_info[0])
 
     # Print out Tensorflow version
-    print "This code was developed and tested on TensorFlow 1.4.1. Your TensorFlow version: %s" % tf.__version__
+    print("This code was developed and tested on TensorFlow 1.4.1. Your TensorFlow version: %s" % tf.__version__)
 
     # Define train_dir
     if not FLAGS.experiment_name and not FLAGS.train_dir and FLAGS.mode != "official_eval":
@@ -148,9 +148,10 @@ def main(unused_argv):
         file_handler = logging.FileHandler(os.path.join(FLAGS.train_dir, "log.txt"))
         logging.getLogger().addHandler(file_handler)
 
+
         # Save a record of flags as a .json file in train_dir
         with open(os.path.join(FLAGS.train_dir, "flags.json"), 'w') as fout:
-            json.dump(FLAGS.__flags, fout)
+            json.dump(FLAGS.flag_values_dict(), fout)
 
         # Make bestmodel dir if necessary
         if not os.path.exists(bestmodel_dir):
@@ -160,7 +161,7 @@ def main(unused_argv):
 
             # Load most recent model
             initialize_model(sess, qa_model, FLAGS.train_dir, expect_exists=False)
-
+            
             # Train
             qa_model.train(sess, train_context_path, train_qn_path, train_ans_path, dev_qn_path, dev_context_path, dev_ans_path)
 
@@ -194,10 +195,10 @@ def main(unused_argv):
             answers_dict = generate_answers(sess, qa_model, word2id, qn_uuid_data, context_token_data, qn_token_data)
 
             # Write the uuid->answer mapping a to json file in root dir
-            print "Writing predictions to %s..." % FLAGS.json_out_path
+            print("Writing predictions to %s..." % FLAGS.json_out_path)
             with io.open(FLAGS.json_out_path, 'w', encoding='utf-8') as f:
-                f.write(unicode(json.dumps(answers_dict, ensure_ascii=False)))
-                print "Wrote predictions to %s" % FLAGS.json_out_path
+                f.write(str(json.dumps(answers_dict, ensure_ascii=False)))
+                print("Wrote predictions to %s" % FLAGS.json_out_path)
 
 
     else:
