@@ -24,7 +24,7 @@ python3 -m nltk.downloader perluniprops
 # Download and preprocess SQuAD data and save in data/
 mkdir -p "$DATA_DIR"
 rm -rf "$DATA_DIR"
-python "$CODE_DIR/preprocessing/squad_preprocess.py" --data_dir "$DATA_DIR"
+python3 "$CODE_DIR/preprocessing/squad_preprocess.py" --data_dir "$DATA_DIR"
 
 # Download GloVe vectors to data/
-python "$CODE_DIR/preprocessing/download_wordvecs.py" --download_dir "$DATA_DIR"
+python3 "$CODE_DIR/preprocessing/download_wordvecs.py" --download_dir "$DATA_DIR"
