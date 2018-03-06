@@ -31,6 +31,7 @@ from evaluate import exact_match_score, f1_score
 from data_batcher import get_batch_generator
 from pretty_print import print_example
 from modules import RNNEncoder, SimpleSoftmaxLayer, BasicAttn
+from bilm import Batcher, BidirectionalLanguageModel, weight_layers
 
 logging.basicConfig(level=logging.INFO)
 
@@ -52,13 +53,20 @@ class QAModel(object):
         self.FLAGS = FLAGS
         self.id2word = id2word
         self.word2id = word2id
+        self.batcher = Batcher(os.path.join(self.FLAGS.data_dir, 'elmo_voca.txt'), self.FLAGS.elmo_embedding_max_token_size)
 
         # Add all parts of the graph
         with tf.variable_scope("QAModel", initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, uniform=True)):
             self.add_placeholders()
             self.add_embedding_layer(emb_matrix)
+
+        # NOTE: CHANGE
+        self.add_embedding_layer_elmo(os.path.join(self.FLAGS.main_dir, 'options.json'), os.path.join(self.FLAGS.main_dir, 'lm_weights.hdf5'))
+
+        with tf.variable_scope("QAModel", initializer=tf.contrib.layers.variance_scaling_initializer(factor=1.0, uniform=True)):
             self.build_graph()
             self.add_loss()
+
 
         # Define trainable parameters, gradient, gradient norm, and clip by gradient norm
         params = tf.trainable_variables()
@@ -87,8 +95,12 @@ class QAModel(object):
         # These are all batch-first: the None corresponds to batch_size and
         # allows you to run the same model with variable batch_size
         self.context_ids = tf.placeholder(tf.int32, shape=[None, self.FLAGS.context_len])
+        # NOTE: CHANGE
+        self.context_elmo = tf.placeholder(tf.int32, shape=[None, None, 60])
         self.context_mask = tf.placeholder(tf.int32, shape=[None, self.FLAGS.context_len])
         self.qn_ids = tf.placeholder(tf.int32, shape=[None, self.FLAGS.question_len])
+        # NOTE: CHANGE
+        self.qn_elmo = tf.placeholder(tf.int32, shape=[None, None, 60])
         self.qn_mask = tf.placeholder(tf.int32, shape=[None, self.FLAGS.question_len])
         self.ans_span = tf.placeholder(tf.int32, shape=[None, 2])
 
@@ -105,15 +117,45 @@ class QAModel(object):
           emb_matrix: shape (400002, embedding_size).
             The GloVe vectors, plus vectors for PAD and UNK.
         """
-        with vs.variable_scope("embeddings"):
+        with vs.variable_scope("embed_glove"):
 
             # Note: the embedding matrix is a tf.constant which means it's not a trainable parameter
             embedding_matrix = tf.constant(emb_matrix, dtype=tf.float32, name="emb_matrix") # shape (400002, embedding_size)
 
             # Get the word embeddings for the context and question,
             # using the placeholders self.context_ids and self.qn_ids
-            self.context_embs = embedding_ops.embedding_lookup(embedding_matrix, self.context_ids) # shape (batch_size, context_len, embedding_size)
-            self.qn_embs = embedding_ops.embedding_lookup(embedding_matrix, self.qn_ids) # shape (batch_size, question_len, embedding_size)
+            self.context_embs_glove = embedding_ops.embedding_lookup(embedding_matrix, self.context_ids) # shape (batch_size, context_len, embedding_size)
+            self.qn_embs_glove = embedding_ops.embedding_lookup(embedding_matrix, self.qn_ids) # shape (batch_size, question_len, embedding_size)
+
+    # NOTE: CHANGE
+    def add_embedding_layer_elmo(self, options_file, weight_file):
+        """
+        Adds word embedding layer to the graph.
+
+        Inputs:
+          options_file and weight_file for the pretrained elmo model
+        """
+        # Build the biLM graph.
+        bilm = BidirectionalLanguageModel(options_file, weight_file)
+
+        # Get ops to compute the LM embeddings.
+        context_embeddings_op = bilm(self.context_elmo)
+        question_embeddings_op = bilm(self.qn_elmo)
+
+        # Get an op to compute ELMo (weighted average of the internal biLM layers)
+        # Our SQuAD model includes ELMo at both the input and output layers
+        # of the task GRU, so we need 4x ELMo representations for the question
+        # and context at each of the input and output.
+        # We use the same ELMo weights for both the question and context
+        # at each of the input and output.
+        self.context_embs_elmo = weight_layers('input', context_embeddings_op, l2_coef=0.0)['weighted_op'] # shape(batch size, context size, 32)
+        with tf.variable_scope('', reuse=True):
+            # the reuse=True scope reuses weights from the context for the question
+            self.qn_embs_elmo = weight_layers(
+                'input', question_embeddings_op, l2_coef=0.0
+            )['weighted_op']
+            # shape(batch size, question len, 32)
+
 
 
     def build_graph(self):
@@ -131,6 +173,10 @@ class QAModel(object):
         # Note: here the RNNEncoder is shared (i.e. the weights are the same)
         # between the context and the question.
         encoder = RNNEncoder(self.FLAGS.hidden_size, self.keep_prob)
+        # NOTE CHANGE: concantanate glove and elmo embedding
+        # TODO: is the mask correct
+        self.context_embs = tf.concat([self.context_embs_elmo, self.context_embs_glove], 2)
+        self.qn_embs = tf.concat([self.qn_embs_elmo, self.qn_embs_glove], 2)
         context_hiddens = encoder.build_graph(self.context_embs, self.context_mask) # (batch_size, context_len, hidden_size*2)
         question_hiddens = encoder.build_graph(self.qn_embs, self.qn_mask) # (batch_size, question_len, hidden_size*2)
 
@@ -218,6 +264,8 @@ class QAModel(object):
         input_feed[self.qn_mask] = batch.qn_mask
         input_feed[self.ans_span] = batch.ans_span
         input_feed[self.keep_prob] = 1.0 - self.FLAGS.dropout # apply dropout
+        input_feed[self.context_elmo] = batch.context_elmo
+        input_feed[self.qn_elmo] = batch.qn_elmo
 
         # output_feed contains the things we want to fetch.
         output_feed = [self.updates, self.summaries, self.loss, self.global_step, self.param_norm, self.gradient_norm]
@@ -249,6 +297,8 @@ class QAModel(object):
         input_feed[self.qn_ids] = batch.qn_ids
         input_feed[self.qn_mask] = batch.qn_mask
         input_feed[self.ans_span] = batch.ans_span
+        input_feed[self.context_elmo] = batch.context_elmo
+        input_feed[self.qn_elmo] = batch.qn_elmo
         # note you don't supply keep_prob here, so it will default to 1 i.e. no dropout
 
         output_feed = [self.loss]
@@ -323,7 +373,7 @@ class QAModel(object):
         # which are longer than our context_len or question_len.
         # We need to do this because if, for example, the true answer is cut
         # off the context, then the loss function is undefined.
-        for batch in get_batch_generator(self.word2id, dev_context_path, dev_qn_path, dev_ans_path, self.FLAGS.batch_size, context_len=self.FLAGS.context_len, question_len=self.FLAGS.question_len, discard_long=True):
+        for batch in get_batch_generator(self.word2id, dev_context_path, dev_qn_path, dev_ans_path, self.FLAGS.batch_size, context_len=self.FLAGS.context_len, question_len=self.FLAGS.question_len, discard_long=True, batcher=self.batcher):
 
             # Get loss for this batch
             loss = self.get_loss(session, batch)
@@ -378,7 +428,7 @@ class QAModel(object):
 
         # Note here we select discard_long=False because we want to sample from the entire dataset
         # That means we're truncating, rather than discarding, examples with too-long context or questions
-        for batch in get_batch_generator(self.word2id, context_path, qn_path, ans_path, self.FLAGS.batch_size, context_len=self.FLAGS.context_len, question_len=self.FLAGS.question_len, discard_long=False):
+        for batch in get_batch_generator(self.word2id, context_path, qn_path, ans_path, self.FLAGS.batch_size, context_len=self.FLAGS.context_len, question_len=self.FLAGS.question_len, discard_long=False, batcher=self.batcher):
 
             pred_start_pos, pred_end_pos = self.get_start_end_pos(session, batch)
 
@@ -461,7 +511,7 @@ class QAModel(object):
             epoch_tic = time.time()
 
             # Loop over batches
-            for batch in get_batch_generator(self.word2id, train_context_path, train_qn_path, train_ans_path, self.FLAGS.batch_size, context_len=self.FLAGS.context_len, question_len=self.FLAGS.question_len, discard_long=True):
+            for batch in get_batch_generator(self.word2id, train_context_path, train_qn_path, train_ans_path, self.FLAGS.batch_size, context_len=self.FLAGS.context_len, question_len=self.FLAGS.question_len, discard_long=True, batcher=self.batcher):
 
                 # Run training iteration
                 iter_tic = time.time()

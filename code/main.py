@@ -52,6 +52,7 @@ tf.app.flags.DEFINE_integer("hidden_size", 200, "Size of the hidden states")
 tf.app.flags.DEFINE_integer("context_len", 600, "The maximum context length of your model")
 tf.app.flags.DEFINE_integer("question_len", 30, "The maximum question length of your model")
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained word vectors. This needs to be one of the available GloVe dimensions: 50/100/200/300")
+tf.app.flags.DEFINE_integer("elmo_embedding_max_token_size", 60, "Size of max lenght of a token (word)")
 
 # How often to print, save, eval
 tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per print.")
@@ -66,6 +67,7 @@ tf.app.flags.DEFINE_string("data_dir", DEFAULT_DATA_DIR, "Where to find preproce
 tf.app.flags.DEFINE_string("ckpt_load_dir", "", "For official_eval mode, which directory to load the checkpoint fron. You need to specify this for official_eval mode.")
 tf.app.flags.DEFINE_string("json_in_path", "", "For official_eval mode, path to JSON input file. You need to specify this for official_eval_mode.")
 tf.app.flags.DEFINE_string("json_out_path", "predictions.json", "Output path for official_eval mode. Defaults to predictions.json")
+tf.app.flags.DEFINE_string("main_dir", MAIN_DIR, "The main directory.")
 
 
 FLAGS = tf.app.flags.FLAGS
@@ -151,7 +153,7 @@ def main(unused_argv):
 
         # Save a record of flags as a .json file in train_dir
         with open(os.path.join(FLAGS.train_dir, "flags.json"), 'w') as fout:
-            json.dump(FLAGS.flag_values_dict(), fout)
+            json.dump(FLAGS.__flags, fout)
 
         # Make bestmodel dir if necessary
         if not os.path.exists(bestmodel_dir):
@@ -161,7 +163,7 @@ def main(unused_argv):
 
             # Load most recent model
             initialize_model(sess, qa_model, FLAGS.train_dir, expect_exists=False)
-            
+
             # Train
             qa_model.train(sess, train_context_path, train_qn_path, train_ans_path, dev_qn_path, dev_context_path, dev_ans_path)
 

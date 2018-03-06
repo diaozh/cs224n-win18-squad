@@ -9,10 +9,10 @@ EXP_DIR=$HEAD_DIR/experiments
 mkdir -p $EXP_DIR
 
 # Creates the environment
-conda create -n squad python=3
+conda create -n squad3 python=3
 
 # Activates the environment
-source activate squad
+source activate squad3
 
 # pip install into environment
 pip install -r requirements.txt
@@ -28,3 +28,10 @@ python3 "$CODE_DIR/preprocessing/squad_preprocess.py" --data_dir "$DATA_DIR"
 
 # Download GloVe vectors to data/
 python3 "$CODE_DIR/preprocessing/download_wordvecs.py" --download_dir "$DATA_DIR"
+
+# preprocess for elmo
+python "$CODE_DIR/preprocessing/elmo_preprocess.py"
+
+# Install elmo
+cd bilm-tf
+python setup.py install
