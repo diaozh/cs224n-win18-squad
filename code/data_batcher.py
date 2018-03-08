@@ -26,10 +26,7 @@ import numpy as np
 from six.moves import xrange
 from vocab import PAD_ID, UNK_ID
 from bilm import Batcher
-
-
-PAD_ELMO = [261] * 60
-
+from copy import deepcopy
 
 class Batch(object):
     """A class to hold the information needed for a training batch"""
@@ -130,6 +127,8 @@ def refill_batches(batches, word2id, context_file, qn_file, ans_file, batch_size
         # Convert tokens to word ids
         context_tokens, context_ids = sentence_to_token_ids(context_line, word2id)
         qn_tokens, qn_ids = sentence_to_token_ids(qn_line, word2id)
+        context_tokens_elmo = deepcopy(context_tokens)
+        qn_tokens_elmo = deepcopy(qn_tokens)
 
         ans_span = intstr_to_intlist(ans_line)
 
@@ -149,6 +148,7 @@ def refill_batches(batches, word2id, context_file, qn_file, ans_file, batch_size
                 continue
             else: # truncate
                 qn_ids = qn_ids[:question_len]
+                qn_tokens_elmo = qn_tokens_elmo[:question_len]
 
         # discard or truncate too-long contexts
         if len(context_ids) > context_len:
@@ -156,10 +156,11 @@ def refill_batches(batches, word2id, context_file, qn_file, ans_file, batch_size
                 continue
             else: # truncate
                 context_ids = context_ids[:context_len]
+                context_tokens_elmo = context_tokens_elmo[:context_len]
 
         # add to examples
         # NOTE: Change
-        examples.append((context_ids, context_tokens, qn_ids, qn_tokens, ans_span, ans_tokens))
+        examples.append((context_ids, context_tokens, qn_ids, qn_tokens, ans_span, ans_tokens, context_tokens_elmo, qn_tokens_elmo))
 
         # stop refilling if you have 160 batches
         if len(examples) == batch_size * 160:
@@ -175,11 +176,11 @@ def refill_batches(batches, word2id, context_file, qn_file, ans_file, batch_size
     for batch_start in range(0, len(examples), batch_size):
 
         # Note: each of these is a list length batch_size of lists of ints (except on last iter when it might be less than batch_size)
-        context_ids_batch, context_tokens_batch, qn_ids_batch, qn_tokens_batch, ans_span_batch, ans_tokens_batch = list(zip(*examples[batch_start:batch_start+batch_size]))
+        context_ids_batch, context_tokens_batch, qn_ids_batch, qn_tokens_batch, ans_span_batch, ans_tokens_batch, context_tokens_elmo_batch, qn_tokens_elmo_batch = list(zip(*examples[batch_start:batch_start+batch_size]))
 
         # NOTE: Change
-        context_elmo_batch = batcher.batch_sentences(context_tokens_batch, context_len) # already padded
-        qn_elmo_batch = batcher.batch_sentences(qn_tokens_batch, question_len) # already padded
+        context_elmo_batch = batcher.batch_sentences(context_tokens_elmo_batch, context_len) # already padded
+        qn_elmo_batch = batcher.batch_sentences(qn_tokens_elmo_batch, question_len) # already padded
         batches.append((context_ids_batch, context_tokens_batch, qn_ids_batch, qn_tokens_batch, ans_span_batch, ans_tokens_batch, context_elmo_batch, qn_elmo_batch))
 
     # shuffle the batches
